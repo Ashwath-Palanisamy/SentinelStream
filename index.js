@@ -23,7 +23,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 // --- 2. THE BRAIN (Analysis Function) ---
 async function runBoardAnalysis() {

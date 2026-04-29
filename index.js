@@ -89,7 +89,7 @@ async function runBoardAnalysis() {
 }
 
 // --- 3. SCHEDULE (Runs daily at midnight) ---
-cron.schedule('0 0 * * *', () => { runBoardAnalysis(); });
+cron.schedule('* * * * *', () => { runBoardAnalysis(); });
 
 // --- 4. DISCORD BOT LOGIC ---
 const client = new Client({

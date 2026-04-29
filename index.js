@@ -111,7 +111,7 @@ async function runBoardAnalysis() {
 
 // --- 3. THE CRON SCHEDULE ---
 // Set to '0 0 * * *' for midnight daily. Testing: '* * * * *'
-cron.schedule('* * * * *', () => {
+cron.schedule('0 0 * * *', () => {
     runBoardAnalysis();
 });
 

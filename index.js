@@ -17,13 +17,13 @@ const app = express();
 app.get('/', (req, res) => { res.send('Sentinel Intelligence is Operational'); });
 app.listen(port, () => console.log(`🚀 Health check listening on port ${port}`));
 
-// Firebase & Gemini Init
+// Firebase Initialization
 if (!admin.apps.length) {
     admin.initializeApp({ credential: admin.credential.cert('./serviceAccount.json') });
 }
 const db = admin.firestore();
 
-// Using Gemini 3 Flash for the 2026 API lifecycle
+// Gemini 3 Flash Initialization
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
@@ -31,13 +31,14 @@ const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 async function runBoardAnalysis() {
     console.log("📊 CRON: Commencing Intelligence Briefing...");
     try {
-        // A. DYNAMIC RULES FETCHING
+        // A. DYNAMIC RULES SYNC
         let rulesContext = "Standard server protocol.";
         if (rulesChannelId) {
             try {
                 const rulesChannel = await client.channels.fetch(rulesChannelId);
                 const rulesMessages = await rulesChannel.messages.fetch({ limit: 5 });
                 if (rulesMessages.size > 0) {
+                    // Reverse to get messages in chronological order
                     rulesContext = rulesMessages.map(m => m.content).reverse().join('\n---\n');
                     console.log("📖 Rules synchronized from Discord.");
                 }
@@ -46,13 +47,13 @@ async function runBoardAnalysis() {
             }
         }
 
-        // B. FETCH LOGS FROM FIREBASE
+        // B. FETCH LOGS FROM FIREBASE (Last 100 entries)
         const snapshot = await db.collection('raw_logs')
             .orderBy('timestamp', 'desc')
             .limit(100)
             .get();
 
-        if (snapshot.empty) return console.log("CRON: No logs found.");
+        if (snapshot.empty) return console.log("CRON: No logs found in Database.");
 
         let logString = "";
         snapshot.forEach(doc => {
@@ -64,9 +65,9 @@ async function runBoardAnalysis() {
         const prompt = `
             SYSTEM: 
             You are the **Sentinel Intelligence Unit** for the ${serverName} Executive Board. 
-            Tone: Cold, clinical, and authoritative. Serve only ${adminName}.
+            Tone: Cold, authoritative, and clinical. Serve only ${adminName}.
 
-            CORE PROTOCOLS (READ FROM #RULES):
+            CORE PROTOCOLS (SYNCED FROM #RULES):
             ${rulesContext}
 
             ANALYSIS GUIDELINES:
@@ -78,8 +79,8 @@ async function runBoardAnalysis() {
 
             REQUIRED OUTPUT STRUCTURE:
             1. **OPERATIONAL STATUS**: [STABLE / HEATED / CRITICAL]
-            2. **RULE COMPLIANCE**: Identify specific violations of the protocols. Ignore casual banter.
-            3. **SOCIAL COHESION REPORT**: Summarize the community vibe.
+            2. **RULE COMPLIANCE**: Identify specific violations of the protocols above. Ignore casual banter.
+            3. **SOCIAL COHESION REPORT**: Briefly summarize the "vibe." Are members getting along?
             4. **SUPPORT AUDIT**: Audit any ticket-related or help-seeking chatter.
             5. **EXECUTIVE DIRECTIVE**: Give ${adminName} one strategic command.
 
@@ -92,17 +93,24 @@ async function runBoardAnalysis() {
         const result = await model.generateContent(prompt);
         const reportText = result.response.text();
 
-        // D. DELIVERY WITH CHUNKING
+        // D. CLEAN FRAGMENTED DELIVERY
         if (reportChannelId) {
             const reportChannel = await client.channels.fetch(reportChannelId);
             const dateStr = new Date().toLocaleDateString();
             
+            // Send Header
+            await reportChannel.send(`**[--- START OF BOARD BRIEFING - ${dateStr} ---]**`);
+
+            // Split and send chunks to respect Discord's 2000-char limit
             for (let i = 0; i < reportText.length; i += 1900) {
                 const chunk = reportText.substring(i, i + 1900);
-                await reportChannel.send(`**[BOARD BRIEFING - ${dateStr}]**\n${chunk}`);
+                await reportChannel.send(chunk);
             }
+
+            // Send Footer
+            await reportChannel.send(`**[--- END OF BRIEFING - SENTINEL UNIT ---]**`);
         }
-        console.log("✅ Analysis delivered.");
+        console.log("✅ Analysis complete and delivered.");
 
     } catch (err) {
         console.error("Analysis Error:", err);
@@ -110,7 +118,7 @@ async function runBoardAnalysis() {
 }
 
 // --- 3. THE CRON SCHEDULE ---
-// Set to '0 0 * * *' for midnight daily. Testing: '* * * * *'
+// Fires once daily at Midnight (00:00)
 cron.schedule('0 0 * * *', () => {
     runBoardAnalysis();
 });
@@ -124,7 +132,7 @@ const client = new Client({
     ],
 });
 
-client.once('clientReady', () => {
+client.once('ready', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
 });
 
@@ -132,10 +140,10 @@ client.on('messageCreate', async (message) => {
     const isBot = message.author.bot;
     const isWatchedChannel = watchedChannels.includes(message.channelId);
 
-    // LOGGING LOGIC:
-    // 1. Must be a watched channel.
-    // 2. Ignore the bot's own messages (don't log your own reports).
-    // 3. Allow other bots (like the MC Bridge) to be logged.
+    // Filter Logic:
+    // 1. Only log from watched channels.
+    // 2. Do NOT log the Sentinel's own reports (prevents loops).
+    // 3. DO log other bots (like the Minecraft bridge).
     if (!isWatchedChannel || (isBot && message.author.id === client.user.id)) return;
 
     try {

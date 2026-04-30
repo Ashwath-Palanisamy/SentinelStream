@@ -38,7 +38,6 @@ async function runBoardAnalysis() {
                 const rulesChannel = await client.channels.fetch(rulesChannelId);
                 const rulesMessages = await rulesChannel.messages.fetch({ limit: 5 });
                 if (rulesMessages.size > 0) {
-                    // Reverse to get messages in chronological order
                     rulesContext = rulesMessages.map(m => m.content).reverse().join('\n---\n');
                     console.log("📖 Rules synchronized from Discord.");
                 }
@@ -61,27 +60,31 @@ async function runBoardAnalysis() {
             logString += `[${data.author}]: ${data.content}\n`;
         });
 
-        // C. THE BALANCED SENTINEL PROMPT
+        // C. THE SMART SENTINEL PROMPT
         const prompt = `
             SYSTEM: 
             You are the **Sentinel Intelligence Unit** for the ${serverName} Executive Board. 
             Tone: Cold, authoritative, and clinical. Serve only ${adminName}.
 
+            OPERATIONAL CONTEXT:
+            - Messages from "**FriendSMP75 Server chat#3273**" or formatted as "[Title] Description" are Minecraft Bridge events.
+            - These represent players currently active in-game. 
+            - These logs include **Embed Data**: Deaths, Joins, Leaves, and Advancements. Treat "Death Messages" as environmental hazards or PvP indicators.
+
             CORE PROTOCOLS (SYNCED FROM #RULES):
             ${rulesContext}
 
             ANALYSIS GUIDELINES:
-            1. **Strict Enforcement**: Any direct violation of the protocols above (DMing staff, bypasses, slurs, or malicious spam) must be flagged as a **CRITICAL RISK**.
+            1. **Strict Enforcement**: Flag direct protocol violations (DMing staff, slurs, malicious spam, or hacks like X-Ray) as **CRITICAL**.
             2. **Social Calibration**: Distinguish between "Casual Human Interaction" and "System Disruption." 
-               - Do not flag informal laughter, emojis, or minor repetition as a risk. 
-               - Recognize these as "Social Cohesion" which is beneficial for server longevity.
-            3. **Support Logic**: Identify if users are helping each other correctly versus giving bad advice.
+               - Banter between long-term associates is beneficial Social Cohesion.
+            3. **Activity Tracking**: Use Join/Leave data to determine server population density and "vibe."
 
             REQUIRED OUTPUT STRUCTURE:
             1. **OPERATIONAL STATUS**: [STABLE / HEATED / CRITICAL]
-            2. **RULE COMPLIANCE**: Identify specific violations of the protocols above. Ignore casual banter.
-            3. **SOCIAL COHESION REPORT**: Briefly summarize the "vibe." Are members getting along?
-            4. **SUPPORT AUDIT**: Audit any ticket-related or help-seeking chatter.
+            2. **RULE COMPLIANCE**: Identify specific violations of the protocols. Ignore casual banter.
+            3. **SOCIAL COHESION REPORT**: Briefly summarize player interactions and community vibe.
+            4. **INCIDENT AUDIT**: Summarize deaths, combat events, or technical malfunctions (like blank packets).
             5. **EXECUTIVE DIRECTIVE**: Give ${adminName} one strategic command.
 
             LOG DATA:
@@ -98,16 +101,13 @@ async function runBoardAnalysis() {
             const reportChannel = await client.channels.fetch(reportChannelId);
             const dateStr = new Date().toLocaleDateString();
             
-            // Send Header
             await reportChannel.send(`**[--- START OF BOARD BRIEFING - ${dateStr} ---]**`);
 
-            // Split and send chunks to respect Discord's 2000-char limit
             for (let i = 0; i < reportText.length; i += 1900) {
                 const chunk = reportText.substring(i, i + 1900);
                 await reportChannel.send(chunk);
             }
 
-            // Send Footer
             await reportChannel.send(`**[--- END OF BRIEFING - SENTINEL UNIT ---]**`);
         }
         console.log("✅ Analysis complete and delivered.");
@@ -117,8 +117,7 @@ async function runBoardAnalysis() {
     }
 }
 
-// --- 3. THE CRON SCHEDULE ---
-// Fires once daily at Midnight (00:00)
+// --- 3. THE CRON SCHEDULE (Daily at Midnight) ---
 cron.schedule('0 0 * * *', () => {
     runBoardAnalysis();
 });
@@ -132,7 +131,7 @@ const client = new Client({
     ],
 });
 
-client.once('clientReady ', () => {
+client.once('clientReady', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
 });
 
@@ -140,21 +139,31 @@ client.on('messageCreate', async (message) => {
     const isBot = message.author.bot;
     const isWatchedChannel = watchedChannels.includes(message.channelId);
 
-    // Filter Logic:
-    // 1. Only log from watched channels.
-    // 2. Do NOT log the Sentinel's own reports (prevents loops).
-    // 3. DO log other bots (like the Minecraft bridge).
     if (!isWatchedChannel || (isBot && message.author.id === client.user.id)) return;
+
+    // --- EMBED PARSING FOR BRIDGE BOT ---
+    let logContent = message.content;
+
+    if (!logContent && message.embeds.length > 0) {
+        const embed = message.embeds[0];
+        const title = embed.title ? `[${embed.title}] ` : "";
+        const desc = embed.description ? embed.description : "";
+        const fields = embed.fields.map(f => `${f.name}: ${f.value}`).join(' | ');
+        
+        logContent = `${title}${desc} ${fields}`.trim();
+    }
+
+    if (!logContent) return; // Skip if no text and no embed content
 
     try {
         await db.collection('raw_logs').add({
             author: message.author.tag,
-            content: message.content,
+            content: logContent,
             channel: message.channel.name,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             fromBot: isBot
         });
-        console.log(`[LOGGED] ${isBot ? '[BRIDGE]' : ''} ${message.author.username}`);
+        console.log(`[LOGGED] ${isBot ? '[BRIDGE/EMBED]' : ''} ${message.author.username}`);
     } catch (err) {
         console.error('Firebase Error:', err);
     }

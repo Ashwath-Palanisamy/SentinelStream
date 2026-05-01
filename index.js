@@ -80,11 +80,6 @@ cron.schedule('0 0 * * *', () => { runBoardAnalysis(); });
 // --- 3. COMMAND REGISTRATION ---
 const commands = [
     new SlashCommandBuilder()
-        .setName('setticketchannel')
-        .setDescription('Set Support Hub')
-        .addChannelOption(o => o.setName('target').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-    new SlashCommandBuilder()
         .setName('setstaffrole')
         .setDescription('Set Staff Role')
         .addRoleOption(o => o.setName('role').setDescription('Role').setRequired(true))
@@ -112,7 +107,6 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 client.once('clientReady', () => {
     console.log(`✅ Sentinel Online`);
     registerCommands();
-    require('./ticket.js')(client, supabase, genAI);
 });
 
 client.on('messageCreate', async (message) => {

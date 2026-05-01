@@ -1,12 +1,12 @@
 require('dotenv').config();
-const { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder, 
+const {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
     PermissionFlagsBits,
-    ChannelType 
+    ChannelType
 } = require('discord.js');
 const admin = require('firebase-admin');
 const express = require('express');
@@ -34,7 +34,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 
 // Gemini Initialization - Using gemini-1.5-flash for SDK compatibility
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // --- 2. THE BRAIN (Daily Analysis) ---
 async function runBoardAnalysis() {
@@ -79,9 +79,21 @@ cron.schedule('0 0 * * *', () => { runBoardAnalysis(); });
 
 // --- 3. COMMAND REGISTRATION ---
 const commands = [
-    new SlashCommandBuilder().setName('setticketchannel').setDescription('Set Support Hub').addChannelOption(o => o.setName('target').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText)).setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-    new SlashCommandBuilder().setName('setstaffrole').setDescription('Set Staff Role').addRoleOption(o => o.setName('role').setDescription('Role').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-    new SlashCommandBuilder().setName('blocksupport').setDescription('Rule 14: 14-day block').addUserOption(o => o.setName('target').setDescription('User').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+    new SlashCommandBuilder()
+        .setName('setticketchannel')
+        .setDescription('Set Support Hub')
+        .addChannelOption(o => o.setName('target').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    new SlashCommandBuilder()
+        .setName('setstaffrole')
+        .setDescription('Set Staff Role')
+        .addRoleOption(o => o.setName('role').setDescription('Role').setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    new SlashCommandBuilder()
+        .setName('blocksupport')
+        .setDescription('Rule 14: 14-day block for DMing staff')
+        .addUserOption(o => o.setName('target').setDescription('User').setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -96,7 +108,8 @@ async function registerCommands() {
 // --- 4. BOT EVENTS ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-client.once('ready', () => {
+// Using clientReady as per latest logs to avoid deprecation warnings
+client.once('clientReady', () => {
     console.log(`✅ Sentinel Online`);
     registerCommands();
     require('./ticket.js')(client, supabase, genAI);

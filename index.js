@@ -171,7 +171,7 @@ const client = new Client({
     ],
 });
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
     registerCommands();
     // Pass Supabase and Gemini to the ticket module

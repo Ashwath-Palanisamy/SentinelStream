@@ -129,6 +129,17 @@ const commands = [
                 .setRequired(true)
                 .addChannelTypes(ChannelType.GuildText))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    
+    // UPDATED: Now included in main index registration
+    new SlashCommandBuilder()
+        .setName('setstaffrole')
+        .setDescription('Set the role that can view and manage support tickets')
+        .addRoleOption(option => 
+            option.setName('role')
+                .setDescription('The role for your staff team')
+                .setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+
     new SlashCommandBuilder()
         .setName('blocksupport')
         .setDescription('Blocks a user from support for 14 days')
@@ -141,7 +152,6 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 async function registerCommands() {
     try {
         console.log('🔄 Sentinel: Refreshing slash commands...');
-        // Ensure CLIENT_ID (1421359342577520734) is in your Render Env Variables
         await rest.put(
             Routes.applicationCommands(process.env.CLIENT_ID), 
             { body: commands }
@@ -161,10 +171,10 @@ const client = new Client({
     ],
 });
 
-// Listens for the clientReady event to initialize modules
-client.once('clientReady', () => {
+client.once('ready', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
     registerCommands();
+    // Pass Supabase and Gemini to the ticket module
     require('./ticket.js')(client, supabase, genAI);
 });
 

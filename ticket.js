@@ -4,14 +4,12 @@ const {
   ButtonBuilder, 
   ButtonStyle, 
   ChannelType,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  MessageFlags // Required for modern interaction responses
 } = require('discord.js');
 
 module.exports = (client, supabase, genAI) => {
 
-    /**
-     * Helper: Post the Support Hub Embed
-     */
     async function sendSupportPost(channel) {
         const supportEmbed = new EmbedBuilder()
             .setTitle('🛡️ FriendSMP75 Support Hub')
@@ -34,9 +32,6 @@ module.exports = (client, supabase, genAI) => {
         await channel.send({ embeds: [supportEmbed], components: [row] });
     }
 
-    /**
-     * AI: Generate 3-word summary title using Gemini 3 Flash
-     */
     async function generateTicketSummary(thread) {
         try {
             const messages = await thread.messages.fetch({ limit: 50 });
@@ -49,7 +44,7 @@ module.exports = (client, supabase, genAI) => {
             if (!conversation) return "Inquiry";
 
             const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
-            const prompt = `Based on this Minecraft ticket, provide a 3-word professional summary title (e.g., "Griefing Report", "Technical Issue"):\n\n${conversation}`;
+            const prompt = `Based on this Minecraft ticket, provide a 3-word professional summary title:\n\n${conversation}`;
             
             const result = await model.generateContent(prompt);
             return result.response.text().replace(/["']/g, "").trim();
@@ -59,15 +54,10 @@ module.exports = (client, supabase, genAI) => {
         }
     }
 
-    /**
-     * Main Interaction Listener
-     */
     client.on('interactionCreate', async (interaction) => {
         
-        // --- SLASH COMMANDS ---
         if (interaction.isChatInputCommand()) {
             
-            // 1. SET TICKET CHANNEL (Staff Only)
             if (interaction.commandName === 'setticketchannel') {
                 const selectedChannel = interaction.options.getChannel('target');
 
@@ -78,13 +68,21 @@ module.exports = (client, supabase, genAI) => {
                         config_value: selectedChannel.id 
                     });
 
-                if (error) return interaction.reply({ content: '❌ DB Error.', ephemeral: true });
+                if (error) {
+                    console.error('Supabase Error:', error.message);
+                    return interaction.reply({ 
+                        content: `❌ DB Error: ${error.message}`, 
+                        flags: [MessageFlags.Ephemeral] 
+                    });
+                }
 
-                await interaction.reply({ content: `✅ Hub set to <#${selectedChannel.id}>.`, ephemeral: true });
+                await interaction.reply({ 
+                    content: `✅ Hub set to <#${selectedChannel.id}>.`, 
+                    flags: [MessageFlags.Ephemeral] 
+                });
                 await sendSupportPost(selectedChannel);
             }
 
-            // 2. BLOCK SUPPORT (Rule 14)
             if (interaction.commandName === 'blocksupport') {
                 const target = interaction.options.getUser('target');
                 const expiryDate = new Date();
@@ -98,7 +96,7 @@ module.exports = (client, supabase, genAI) => {
                         reason: 'Support bypass / DMing staff'
                     });
 
-                if (error) return interaction.reply({ content: '❌ Database error.', ephemeral: true });
+                if (error) return interaction.reply({ content: '❌ DB Error.', flags: [MessageFlags.Ephemeral] });
 
                 return interaction.reply({ 
                     content: `🛡️ **Rule 14 Applied:** <@${target.id}> is blocked for 14 days.`,
@@ -106,12 +104,8 @@ module.exports = (client, supabase, genAI) => {
             }
         }
 
-        // --- BUTTONS ---
         if (interaction.isButton()) {
-            
-            // ACTION: OPEN TICKET
             if (interaction.customId === 'open_ticket') {
-                // Check if user is blocked (Rule 14)
                 const { data: blockData } = await supabase
                     .from('blocked_players')
                     .select('unblock_at')
@@ -120,10 +114,9 @@ module.exports = (client, supabase, genAI) => {
 
                 if (blockData && new Date(blockData.unblock_at) > new Date()) {
                     const ts = Math.floor(new Date(blockData.unblock_at).getTime() / 1000);
-                    return interaction.reply({ content: `❌ Blocked. Expires <t:${ts}:R>.`, ephemeral: true });
+                    return interaction.reply({ content: `❌ Blocked. Expires <t:${ts}:R>.`, flags: [MessageFlags.Ephemeral] });
                 }
 
-                // Create Private Thread
                 const thread = await interaction.channel.threads.create({
                     name: `ticket-${interaction.user.username}`,
                     autoArchiveDuration: 10080,
@@ -132,7 +125,6 @@ module.exports = (client, supabase, genAI) => {
 
                 await thread.members.add(interaction.user.id);
 
-                // Log to Supabase using 'anon' key permissions
                 await supabase.from('tickets').insert({
                     discord_id: interaction.user.id,
                     channel_id: thread.id,
@@ -140,32 +132,24 @@ module.exports = (client, supabase, genAI) => {
                 });
 
                 const closeRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('close_ticket')
-                        .setLabel('Close & Summarize')
-                        .setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('close_ticket').setLabel('Close & Summarize').setStyle(ButtonStyle.Danger)
                 );
 
-                await interaction.reply({ content: `Ticket created: ${thread}`, ephemeral: true });
+                await interaction.reply({ content: `Ticket created: ${thread}`, flags: [MessageFlags.Ephemeral] });
                 await thread.send({
                     content: `Welcome <@${interaction.user.id}>! Describe your issue. Staff will assist shortly.`,
                     components: [closeRow]
                 });
             }
 
-            // ACTION: CLOSE TICKET
             if (interaction.customId === 'close_ticket') {
-                await interaction.deferReply({ ephemeral: true });
+                await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
                 const thread = interaction.channel;
                 const aiTitle = await generateTicketSummary(thread);
 
                 await supabase
                     .from('tickets')
-                    .update({ 
-                        status: 'closed', 
-                        title: aiTitle, 
-                        closed_at: new Date() 
-                    })
+                    .update({ status: 'closed', title: aiTitle, closed_at: new Date() })
                     .eq('channel_id', thread.id);
 
                 await interaction.editReply(`Closed. AI Summary: **${aiTitle}**`);
@@ -173,6 +157,4 @@ module.exports = (client, supabase, genAI) => {
             }
         }
     });
-
-    console.log("🎟️ Ticket System Module Operational for May 1st Event.");
 };

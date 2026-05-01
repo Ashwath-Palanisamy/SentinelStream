@@ -76,7 +76,7 @@ const client = new Client({
 });
 
 // FIXED: Changed 'clientReady' to 'ready' to ensure initialization
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
     registerCommands(); // Register commands once the bot is online
     require('./ticket.js')(client, supabase, genAI);

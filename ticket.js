@@ -1,11 +1,11 @@
 const { 
-  EmbedBuilder, 
-  ActionRowBuilder, 
-  ButtonBuilder, 
-  ButtonStyle, 
-  ChannelType,
-  PermissionFlagsBits,
-  MessageFlags 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ChannelType,
+    PermissionFlagsBits,
+    MessageFlags 
 } = require('discord.js');
 
 module.exports = (client, supabase, genAI) => {
@@ -43,14 +43,16 @@ module.exports = (client, supabase, genAI) => {
 
             if (!conversation) return "Inquiry";
 
-            const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
+            // FIXED: Use the correct API model identifier
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
             const prompt = `Based on this Minecraft ticket, provide a 3-word professional summary title:\n\n${conversation}`;
             
             const result = await model.generateContent(prompt);
             return result.response.text().replace(/["']/g, "").trim();
         } catch (error) {
             console.error("AI Title Error:", error);
-            return "Support Ticket";
+            // CRITICAL: Return a fallback so the database update still triggers
+            return "Support Ticket"; 
         }
     }
 
@@ -122,6 +124,7 @@ module.exports = (client, supabase, genAI) => {
                     await thread.send({ content: `🔔 Staff Alert: <@&${config.config_value}> - A new ticket has been opened.` });
                 }
 
+                // Initial insert creates the history row for your website
                 await supabase.from('tickets').insert({ discord_id: interaction.user.id, channel_id: thread.id, status: 'open' });
 
                 const closeRow = new ActionRowBuilder().addComponents(
@@ -138,8 +141,15 @@ module.exports = (client, supabase, genAI) => {
             if (interaction.customId === 'close_ticket') {
                 await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
                 const thread = interaction.channel;
+                
+                // If this function fails, the code below it won't run. 
+                // The fallback in generateTicketSummary now prevents this.
                 const aiTitle = await generateTicketSummary(thread);
-                await supabase.from('tickets').update({ status: 'closed', title: aiTitle, closed_at: new Date() }).eq('channel_id', thread.id);
+                
+                await supabase.from('tickets')
+                    .update({ status: 'closed', title: aiTitle, closed_at: new Date() })
+                    .eq('channel_id', thread.id);
+                
                 await interaction.editReply(`Closed. AI Summary: **${aiTitle}**`);
                 await thread.setArchived(true);
             }

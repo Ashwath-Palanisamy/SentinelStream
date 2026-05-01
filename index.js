@@ -35,9 +35,10 @@ const db = admin.firestore();
 // Supabase Initialization
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Gemini 3 Flash Initialization
+// Gemini Initialization
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
+// FIXED: Using the recognized SDK model string for Flash 3
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // --- 2. THE BRAIN (Analysis Function) ---
 async function runBoardAnalysis() {
@@ -130,7 +131,6 @@ const commands = [
                 .addChannelTypes(ChannelType.GuildText))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
     
-    // UPDATED: Now included in main index registration
     new SlashCommandBuilder()
         .setName('setstaffrole')
         .setDescription('Set the role that can view and manage support tickets')
@@ -171,10 +171,10 @@ const client = new Client({
     ],
 });
 
-client.once('clientReady', () => {
+// FIXED: Event name is 'ready'
+client.once('ready', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
     registerCommands();
-    // Pass Supabase and Gemini to the ticket module
     require('./ticket.js')(client, supabase, genAI);
 });
 

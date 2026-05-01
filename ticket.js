@@ -5,7 +5,7 @@ const {
   ButtonStyle, 
   ChannelType,
   PermissionFlagsBits,
-  MessageFlags // Required for modern interaction responses
+  MessageFlags 
 } = require('discord.js');
 
 module.exports = (client, supabase, genAI) => {
@@ -58,65 +58,56 @@ module.exports = (client, supabase, genAI) => {
         
         if (interaction.isChatInputCommand()) {
             
+            // 1. SET TICKET CHANNEL
             if (interaction.commandName === 'setticketchannel') {
                 const selectedChannel = interaction.options.getChannel('target');
-
                 const { error } = await supabase
                     .from('server_config')
-                    .upsert({ 
-                        config_key: 'ticket_channel_id', 
-                        config_value: selectedChannel.id 
-                    });
+                    .upsert({ config_key: 'ticket_channel_id', config_value: selectedChannel.id });
 
-                if (error) {
-                    console.error('Supabase Error:', error.message);
-                    return interaction.reply({ 
-                        content: `❌ DB Error: ${error.message}`, 
-                        flags: [MessageFlags.Ephemeral] 
-                    });
-                }
-
-                await interaction.reply({ 
-                    content: `✅ Hub set to <#${selectedChannel.id}>.`, 
-                    flags: [MessageFlags.Ephemeral] 
-                });
+                if (error) return interaction.reply({ content: `❌ DB Error: ${error.message}`, flags: [MessageFlags.Ephemeral] });
+                await interaction.reply({ content: `✅ Hub set to <#${selectedChannel.id}>.`, flags: [MessageFlags.Ephemeral] });
                 await sendSupportPost(selectedChannel);
             }
 
+            // 2. SET STAFF ROLE
+            if (interaction.commandName === 'setstaffrole') {
+                const selectedRole = interaction.options.getRole('role');
+                const { error } = await supabase
+                    .from('server_config')
+                    .upsert({ config_key: 'staff_role_id', config_value: selectedRole.id });
+
+                if (error) return interaction.reply({ content: `❌ DB Error: ${error.message}`, flags: [MessageFlags.Ephemeral] });
+                await interaction.reply({ 
+                    content: `✅ Staff Role set to **${selectedRole.name}**. They will be added to all new tickets.`, 
+                    flags: [MessageFlags.Ephemeral] 
+                });
+            }
+
+            // 3. BLOCK SUPPORT
             if (interaction.commandName === 'blocksupport') {
                 const target = interaction.options.getUser('target');
                 const expiryDate = new Date();
                 expiryDate.setDate(expiryDate.getDate() + 14);
-
                 const { error } = await supabase
                     .from('blocked_players')
-                    .upsert({ 
-                        discord_id: target.id, 
-                        unblock_at: expiryDate.toISOString(),
-                        reason: 'Support bypass / DMing staff'
-                    });
+                    .upsert({ discord_id: target.id, unblock_at: expiryDate.toISOString(), reason: 'Support bypass' });
 
                 if (error) return interaction.reply({ content: '❌ DB Error.', flags: [MessageFlags.Ephemeral] });
-
-                return interaction.reply({ 
-                    content: `🛡️ **Rule 14 Applied:** <@${target.id}> is blocked for 14 days.`,
-                });
+                return interaction.reply({ content: `🛡️ **Rule 14 Applied:** <@${target.id}> blocked for 14 days.` });
             }
         }
 
         if (interaction.isButton()) {
             if (interaction.customId === 'open_ticket') {
-                const { data: blockData } = await supabase
-                    .from('blocked_players')
-                    .select('unblock_at')
-                    .eq('discord_id', interaction.user.id)
-                    .single();
-
+                // Rule 14 Check
+                const { data: blockData } = await supabase.from('blocked_players').select('unblock_at').eq('discord_id', interaction.user.id).single();
                 if (blockData && new Date(blockData.unblock_at) > new Date()) {
                     const ts = Math.floor(new Date(blockData.unblock_at).getTime() / 1000);
                     return interaction.reply({ content: `❌ Blocked. Expires <t:${ts}:R>.`, flags: [MessageFlags.Ephemeral] });
                 }
 
+                // Create Thread
                 const thread = await interaction.channel.threads.create({
                     name: `ticket-${interaction.user.username}`,
                     autoArchiveDuration: 10080,
@@ -125,11 +116,13 @@ module.exports = (client, supabase, genAI) => {
 
                 await thread.members.add(interaction.user.id);
 
-                await supabase.from('tickets').insert({
-                    discord_id: interaction.user.id,
-                    channel_id: thread.id,
-                    status: 'open'
-                });
+                // ADD STAFF ROLE TO THREAD
+                const { data: config } = await supabase.from('server_config').select('config_value').eq('config_key', 'staff_role_id').single();
+                if (config && config.config_value) {
+                    await thread.send({ content: `🔔 Staff Alert: <@&${config.config_value}> - A new ticket has been opened.` });
+                }
+
+                await supabase.from('tickets').insert({ discord_id: interaction.user.id, channel_id: thread.id, status: 'open' });
 
                 const closeRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('close_ticket').setLabel('Close & Summarize').setStyle(ButtonStyle.Danger)
@@ -137,7 +130,7 @@ module.exports = (client, supabase, genAI) => {
 
                 await interaction.reply({ content: `Ticket created: ${thread}`, flags: [MessageFlags.Ephemeral] });
                 await thread.send({
-                    content: `Welcome <@${interaction.user.id}>! Describe your issue. Staff will assist shortly.`,
+                    content: `Welcome <@${interaction.user.id}>! Staff will assist shortly.`,
                     components: [closeRow]
                 });
             }
@@ -146,12 +139,7 @@ module.exports = (client, supabase, genAI) => {
                 await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
                 const thread = interaction.channel;
                 const aiTitle = await generateTicketSummary(thread);
-
-                await supabase
-                    .from('tickets')
-                    .update({ status: 'closed', title: aiTitle, closed_at: new Date() })
-                    .eq('channel_id', thread.id);
-
+                await supabase.from('tickets').update({ status: 'closed', title: aiTitle, closed_at: new Date() }).eq('channel_id', thread.id);
                 await interaction.editReply(`Closed. AI Summary: **${aiTitle}**`);
                 await thread.setArchived(true);
             }

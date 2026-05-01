@@ -120,7 +120,7 @@ const client = new Client({
 });
 
 // FIXED: Changed 'clientReady' to 'ready'
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
     // Initialize Ticket System
     require('./ticket.js')(client, supabase, genAI);

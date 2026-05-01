@@ -1,157 +1,89 @@
-const { 
-    EmbedBuilder, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
-    ChannelType,
-    PermissionFlagsBits,
-    MessageFlags 
-} = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, MessageFlags } = require('discord.js');
 
 module.exports = (client, supabase, genAI) => {
 
-    async function sendSupportPost(channel) {
-        const supportEmbed = new EmbedBuilder()
-            .setTitle('🛡️ FriendSMP75 Support Hub')
-            .setDescription('Need assistance? Click the button below to open a ticket.')
-            .addFields(
-                { name: '📜 Server Rules', value: 'Please ensure you have read the rules before opening a ticket.' },
-                { name: '⚠️ Support Protocol', value: 'Bypassing this system to DM staff directly results in a **14-day ban**.' }
-            )
-            .setColor('#5865F2')
-            .setFooter({ text: 'FriendSMP75 | Memories Alive' });
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('open_ticket')
-                .setLabel('Open a Ticket')
-                .setStyle(ButtonStyle.Success)
-                .setEmoji('📩')
-        );
-
-        await channel.send({ embeds: [supportEmbed], components: [row] });
-    }
-
     async function generateTicketSummary(thread) {
         try {
+            // Fetch messages specifically to find user input
             const messages = await thread.messages.fetch({ limit: 50 });
-            const conversation = messages
-                .filter(m => !m.author.bot)
+            const userMessages = messages.filter(m => !m.author.bot);
+
+            // If no user typed anything, we can't summarize
+            if (userMessages.size === 0) return "General Support";
+
+            const conversation = userMessages
                 .map(m => `${m.author.username}: ${m.content}`)
                 .reverse()
                 .join('\n');
 
-            if (!conversation) return "Inquiry";
-
-            // FIXED: Use the correct API model identifier
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-            const prompt = `Based on this Minecraft ticket, provide a 3-word professional summary title:\n\n${conversation}`;
+            const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
+            const prompt = `Provide a 3-word professional summary of this ticket: \n\n${conversation}`;
             
             const result = await model.generateContent(prompt);
             return result.response.text().replace(/["']/g, "").trim();
         } catch (error) {
-            console.error("AI Title Error:", error);
-            // CRITICAL: Return a fallback so the database update still triggers
-            return "Support Ticket"; 
+            console.error("AI Summary Error:", error);
+            return "Support Ticket"; // Fallback ensures Supabase update still runs
         }
     }
 
     client.on('interactionCreate', async (interaction) => {
-        
         if (interaction.isChatInputCommand()) {
-            
-            // 1. SET TICKET CHANNEL
+            // Handle Config Commands
             if (interaction.commandName === 'setticketchannel') {
-                const selectedChannel = interaction.options.getChannel('target');
-                const { error } = await supabase
-                    .from('server_config')
-                    .upsert({ config_key: 'ticket_channel_id', config_value: selectedChannel.id });
-
-                if (error) return interaction.reply({ content: `❌ DB Error: ${error.message}`, flags: [MessageFlags.Ephemeral] });
-                await interaction.reply({ content: `✅ Hub set to <#${selectedChannel.id}>.`, flags: [MessageFlags.Ephemeral] });
-                await sendSupportPost(selectedChannel);
+                const chan = interaction.options.getChannel('target');
+                await supabase.from('server_config').upsert({ config_key: 'ticket_channel_id', config_value: chan.id });
+                await interaction.reply({ content: `✅ Hub set to <#${chan.id}>.`, flags: [MessageFlags.Ephemeral] });
             }
-
-            // 2. SET STAFF ROLE
+            
             if (interaction.commandName === 'setstaffrole') {
-                const selectedRole = interaction.options.getRole('role');
-                const { error } = await supabase
-                    .from('server_config')
-                    .upsert({ config_key: 'staff_role_id', config_value: selectedRole.id });
-
-                if (error) return interaction.reply({ content: `❌ DB Error: ${error.message}`, flags: [MessageFlags.Ephemeral] });
-                await interaction.reply({ 
-                    content: `✅ Staff Role set to **${selectedRole.name}**. They will be added to all new tickets.`, 
-                    flags: [MessageFlags.Ephemeral] 
-                });
+                const role = interaction.options.getRole('role');
+                await supabase.from('server_config').upsert({ config_key: 'staff_role_id', config_value: role.id });
+                await interaction.reply({ content: `✅ Staff set to ${role.name}.`, flags: [MessageFlags.Ephemeral] });
             }
 
-            // 3. BLOCK SUPPORT
             if (interaction.commandName === 'blocksupport') {
                 const target = interaction.options.getUser('target');
-                const expiryDate = new Date();
-                expiryDate.setDate(expiryDate.getDate() + 14);
-                const { error } = await supabase
-                    .from('blocked_players')
-                    .upsert({ discord_id: target.id, unblock_at: expiryDate.toISOString(), reason: 'Support bypass' });
-
-                if (error) return interaction.reply({ content: '❌ DB Error.', flags: [MessageFlags.Ephemeral] });
-                return interaction.reply({ content: `🛡️ **Rule 14 Applied:** <@${target.id}> blocked for 14 days.` });
+                const expiry = new Date(); expiry.setDate(expiry.getDate() + 14);
+                await supabase.from('blocked_players').upsert({ discord_id: target.id, unblock_at: expiry.toISOString() });
+                await interaction.reply({ content: `🛡️ Rule 14 applied to <@${target.id}>.` });
             }
         }
 
         if (interaction.isButton()) {
             if (interaction.customId === 'open_ticket') {
                 // Rule 14 Check
-                const { data: blockData } = await supabase.from('blocked_players').select('unblock_at').eq('discord_id', interaction.user.id).single();
-                if (blockData && new Date(blockData.unblock_at) > new Date()) {
-                    const ts = Math.floor(new Date(blockData.unblock_at).getTime() / 1000);
-                    return interaction.reply({ content: `❌ Blocked. Expires <t:${ts}:R>.`, flags: [MessageFlags.Ephemeral] });
-                }
+                const { data: block } = await supabase.from('blocked_players').select('unblock_at').eq('discord_id', interaction.user.id).single();
+                if (block && new Date(block.unblock_at) > new Date()) return interaction.reply({ content: "❌ You are currently blocked.", flags: [MessageFlags.Ephemeral] });
 
-                // Create Thread
                 const thread = await interaction.channel.threads.create({
                     name: `ticket-${interaction.user.username}`,
-                    autoArchiveDuration: 10080,
                     type: ChannelType.PrivateThread,
                 });
 
                 await thread.members.add(interaction.user.id);
+                const { data: conf } = await supabase.from('server_config').select('config_value').eq('config_key', 'staff_role_id').single();
+                if (conf) await thread.send(`🔔 <@&${conf.config_value}> New ticket.`);
 
-                // ADD STAFF ROLE TO THREAD
-                const { data: config } = await supabase.from('server_config').select('config_value').eq('config_key', 'staff_role_id').single();
-                if (config && config.config_value) {
-                    await thread.send({ content: `🔔 Staff Alert: <@&${config.config_value}> - A new ticket has been opened.` });
-                }
-
-                // Initial insert creates the history row for your website
+                // Insert into Supabase for website visibility
                 await supabase.from('tickets').insert({ discord_id: interaction.user.id, channel_id: thread.id, status: 'open' });
 
-                const closeRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('close_ticket').setLabel('Close & Summarize').setStyle(ButtonStyle.Danger)
-                );
-
-                await interaction.reply({ content: `Ticket created: ${thread}`, flags: [MessageFlags.Ephemeral] });
-                await thread.send({
-                    content: `Welcome <@${interaction.user.id}>! Staff will assist shortly.`,
-                    components: [closeRow]
-                });
+                const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('close_ticket').setLabel('Close').setStyle(ButtonStyle.Danger));
+                await interaction.reply({ content: `Ticket: ${thread}`, flags: [MessageFlags.Ephemeral] });
+                await thread.send({ content: `Hello <@${interaction.user.id}>, how can we help?`, components: [row] });
             }
 
             if (interaction.customId === 'close_ticket') {
                 await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
-                const thread = interaction.channel;
+                const aiTitle = await generateTicketSummary(interaction.channel);
                 
-                // If this function fails, the code below it won't run. 
-                // The fallback in generateTicketSummary now prevents this.
-                const aiTitle = await generateTicketSummary(thread);
-                
+                // Update existing row to 'closed' so it persists in your web gallery
                 await supabase.from('tickets')
                     .update({ status: 'closed', title: aiTitle, closed_at: new Date() })
-                    .eq('channel_id', thread.id);
+                    .eq('channel_id', interaction.channel.id);
                 
-                await interaction.editReply(`Closed. AI Summary: **${aiTitle}**`);
-                await thread.setArchived(true);
+                await interaction.editReply(`Ticket closed: **${aiTitle}**`);
+                await interaction.channel.setArchived(true);
             }
         }
     });

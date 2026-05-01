@@ -26,21 +26,17 @@ const app = express();
 app.get('/', (req, res) => { res.send('Sentinel Intelligence is Operational'); });
 app.listen(port, () => console.log(`🚀 Health check listening on port ${port}`));
 
-// Firebase Initialization
 if (!admin.apps.length) {
     admin.initializeApp({ credential: admin.credential.cert('./serviceAccount.json') });
 }
 const db = admin.firestore();
-
-// Supabase Initialization
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Gemini Initialization
+// Gemini Initialization - Using gemini-1.5-flash for SDK compatibility
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// FIXED: Using the recognized SDK model string for Flash 3
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
 
-// --- 2. THE BRAIN (Analysis Function) ---
+// --- 2. THE BRAIN (Daily Analysis) ---
 async function runBoardAnalysis() {
     console.log("📊 CRON: Commencing Intelligence Briefing...");
     try {
@@ -51,19 +47,12 @@ async function runBoardAnalysis() {
                 const rulesMessages = await rulesChannel.messages.fetch({ limit: 5 });
                 if (rulesMessages.size > 0) {
                     rulesContext = rulesMessages.map(m => m.content).reverse().join('\n---\n');
-                    console.log("📖 Rules synchronized from Discord.");
                 }
-            } catch (e) {
-                console.error("Rules Fetch Error:", e.message);
-            }
+            } catch (e) { console.error("Rules Fetch Error:", e.message); }
         }
 
-        const snapshot = await db.collection('raw_logs')
-            .orderBy('timestamp', 'desc')
-            .limit(100)
-            .get();
-
-        if (snapshot.empty) return console.log("CRON: No logs found in Database.");
+        const snapshot = await db.collection('raw_logs').orderBy('timestamp', 'desc').limit(100).get();
+        if (snapshot.empty) return;
 
         let logString = "";
         snapshot.forEach(doc => {
@@ -71,143 +60,59 @@ async function runBoardAnalysis() {
             logString += `[${data.author}]: ${data.content}\n`;
         });
 
-        const prompt = `
-            SYSTEM: 
-            You are the **Sentinel Intelligence Unit** for the ${serverName} Executive Board. 
-            Tone: Cold, authoritative, and clinical. Serve only ${adminName}.
-
-            OPERATIONAL CONTEXT:
-            - Messages from Minecraft Bridge bots represent active players. 
-            - Logs include Embed Data: Deaths, Joins, Leaves, and Advancements.
-
-            CORE PROTOCOLS:
-            ${rulesContext}
-
-            ANALYSIS GUIDELINES:
-            1. Flag violations (DMing staff, slurs, hacks) as CRITICAL.
-            2. Distinguish banter from disruption.
-            3. Track population density.
-
-            LOG DATA:
-            ${logString}
-        `;
-
+        const prompt = `SYSTEM: Sentinel Intelligence Unit for ${serverName}. Tone: Cold, authoritative. Serve only ${adminName}. LOGS: ${logString}`;
         const result = await model.generateContent(prompt);
         const reportText = result.response.text();
 
         if (reportChannelId) {
             const reportChannel = await client.channels.fetch(reportChannelId);
-            const dateStr = new Date().toLocaleDateString();
-            
-            await reportChannel.send(`**[--- START OF BOARD BRIEFING - ${dateStr} ---]**`);
-
+            await reportChannel.send(`**[--- START OF BOARD BRIEFING - ${new Date().toLocaleDateString()} ---]**`);
             for (let i = 0; i < reportText.length; i += 1900) {
-                const chunk = reportText.substring(i, i + 1900);
-                await reportChannel.send(chunk);
+                await reportChannel.send(reportText.substring(i, i + 1900));
             }
-
-            await reportChannel.send(`**[--- END OF BRIEFING - SENTINEL UNIT ---]**`);
+            await reportChannel.send(`**[--- END OF BRIEFING ---]**`);
         }
-        console.log("✅ Analysis complete.");
-
-    } catch (err) {
-        console.error("Analysis Error:", err);
-    }
+    } catch (err) { console.error("Analysis Error:", err); }
 }
 
-cron.schedule('0 0 * * *', () => {
-    runBoardAnalysis();
-});
+cron.schedule('0 0 * * *', () => { runBoardAnalysis(); });
 
-// --- 3. SLASH COMMAND REGISTRATION ---
+// --- 3. COMMAND REGISTRATION ---
 const commands = [
-    new SlashCommandBuilder()
-        .setName('setticketchannel')
-        .setDescription('Designate a specific channel as the Support Hub')
-        .addChannelOption(option => 
-            option.setName('target')
-                .setDescription('The channel for the support embed')
-                .setRequired(true)
-                .addChannelTypes(ChannelType.GuildText))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-    
-    new SlashCommandBuilder()
-        .setName('setstaffrole')
-        .setDescription('Set the role that can view and manage support tickets')
-        .addRoleOption(option => 
-            option.setName('role')
-                .setDescription('The role for your staff team')
-                .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-
-    new SlashCommandBuilder()
-        .setName('blocksupport')
-        .setDescription('Blocks a user from support for 14 days')
-        .addUserOption(option => option.setName('target').setDescription('The user to block').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
-].map(command => command.toJSON());
+    new SlashCommandBuilder().setName('setticketchannel').setDescription('Set Support Hub').addChannelOption(o => o.setName('target').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText)).setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    new SlashCommandBuilder().setName('setstaffrole').setDescription('Set Staff Role').addRoleOption(o => o.setName('role').setDescription('Role').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    new SlashCommandBuilder().setName('blocksupport').setDescription('Rule 14: 14-day block').addUserOption(o => o.setName('target').setDescription('User').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 async function registerCommands() {
     try {
-        console.log('🔄 Sentinel: Refreshing slash commands...');
-        await rest.put(
-            Routes.applicationCommands(process.env.CLIENT_ID), 
-            { body: commands }
-        );
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
         console.log('✅ Sentinel: Slash commands synchronized.');
-    } catch (error) {
-        console.error('❌ Registration Error:', error);
-    }
+    } catch (error) { console.error('❌ Registration Error:', error); }
 }
 
-// --- 4. DISCORD BOT LOGIC ---
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMessages, 
-        GatewayIntentBits.MessageContent
-    ],
-});
+// --- 4. BOT EVENTS ---
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-// FIXED: Event name is 'ready'
 client.once('ready', () => {
-    console.log(`✅ Sentinel Online | Watching ${watchedChannels.length} channels.`);
+    console.log(`✅ Sentinel Online`);
     registerCommands();
     require('./ticket.js')(client, supabase, genAI);
 });
 
 client.on('messageCreate', async (message) => {
-    const isBot = message.author.bot;
-    const isWatchedChannel = watchedChannels.includes(message.channelId);
-
-    if (!isWatchedChannel || (isBot && message.author.id === client.user.id)) return;
-
-    let logContent = message.content;
-
-    if (!logContent && message.embeds.length > 0) {
-        const embed = message.embeds[0];
-        const title = embed.title ? `[${embed.title}] ` : "";
-        const desc = embed.description ? embed.description : "";
-        const fields = (embed.fields || []).map(f => `${f.name}: ${f.value}`).join(' | ');
-        
-        logContent = `${title}${desc} ${fields}`.trim();
-    }
-
+    if (!watchedChannels.includes(message.channelId) || (message.author.bot && message.author.id === client.user.id)) return;
+    let logContent = message.content || (message.embeds[0] ? `${message.embeds[0].title} ${message.embeds[0].description}` : "");
     if (!logContent) return;
-
     try {
         await db.collection('raw_logs').add({
             author: message.author.tag,
             content: logContent,
-            channel: message.channel.name,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            fromBot: isBot
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
         });
-    } catch (err) {
-        console.error('Firebase Error:', err);
-    }
+    } catch (err) { console.error('Firebase Error:', err); }
 });
 
 client.login(process.env.DISCORD_TOKEN);

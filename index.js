@@ -4,7 +4,7 @@ const admin = require('firebase-admin');
 const express = require('express');
 const cron = require('node-cron');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { createClient } = require('@supabase/supabase-client'); // ADDED
+const { createClient } = require('@supabase/supabase-js');
 
 // --- 1. CONFIG & INIT ---
 const port = process.env.PORT || 3000;

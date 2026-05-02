@@ -75,7 +75,7 @@ async function runBoardAnalysis() {
     } catch (err) { console.error("Analysis Error:", err); }
 }
 
-cron.schedule('0 0 * * *', () => { runBoardAnalysis(); });
+cron.schedule('* * * * *', () => { runBoardAnalysis(); });
 
 // --- 3. COMMAND REGISTRATION ---
 const commands = [

@@ -103,8 +103,8 @@ async function registerCommands() {
 // --- 4. BOT EVENTS ---
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
-// Using clientReady as per latest logs to avoid deprecation warnings
-client.once('clientReady', () => {
+// Using ready event for proper initialization
+client.once('ready', () => {
     console.log(`✅ Sentinel Online`);
     registerCommands();
 });
